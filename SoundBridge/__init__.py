@@ -49,6 +49,9 @@ class SoundBridge(ControlSurface):
                 }
                 for t in tracks
             ]
+        # The track the artist last clicked in Ableton.
+        if msg["cmd"] == "selected":
+            return self.song().view.selected_track.name
         track = next(t for t in tracks if t.name == msg["track"])
         if msg["cmd"] == "insert":
             track.insert_device(msg["device"])
