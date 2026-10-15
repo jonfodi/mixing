@@ -30,6 +30,14 @@ See `CLAUDE.md` for the philosophy and vocabulary.
 python3 llm.py
 ```
 
-Open your project in Ableton and click the track to mix. Then type what you want it to feel like. The controls print with a reason for each. Then they are applied in Ableton. Rejected controls print at the end.
+Open your project in Ableton and click the track to mix. Then type what you want it to feel like. The controls print with a reason for each. Then they are applied in Ableton. Rejected controls print at the end. Keep typing to react to what you hear. Press Enter on an empty line to stop.
+
+## Evals
+
+```
+MODEL=opus python3 evals.py
+```
+
+Runs fixed test conversations against the selected track. A program checks what it can. You listen and grade each turn good or bad, with a reason. Each run is saved to `results/` with the exact instructions used, and its totals print beside the previous run. Commit the results.
 
 Settings live in `.env`. Copy `.env.example` to `.env` to start. `MODEL` defaults to haiku. It is cheap for checking that everything is connected. Set `MODEL=opus` to judge how it sounds.
