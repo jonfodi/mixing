@@ -106,8 +106,10 @@ Shared vocabulary is crucial for human-agent communication. Below are the words 
 - **Knob kinds:** the few kinds of knobs a mix engineer has. Balance, tone, space, echo, width, dynamics, texture, movement, change over time.
 - **Controls:** the exact effect, setting, and value in the DAW. Example: Reverb, Decay Time, 3 seconds.
 - **Coherence:** every choice communicates the theme.
-- **Mix:** shaping the parts inside a project. This is what we do.
-- **Master:** the final polish of a finished song as one file. This is not what we do.
+- **Mix:** shaping the parts inside a project.
+- **Master:** the final polish of a finished song as one file. 
+- **Track:** the entire song, composed of many stems
+- **Stem:** a component of a song (vocal, drum, guitar)
 
 **Artist input**
 - **Levels:** how specific a piece of artist input is.
