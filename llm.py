@@ -25,7 +25,7 @@ You are mixing one track. You can use any stock Ableton Live 12 audio effect. Na
 
 In reason, say in plain words how the control serves the theme.
 
-Each turn you see the conversation so far. Build on it. Do not start over."""
+Each turn you see the conversation so far and the effects on the track now. Build on them. Do not start over."""
 
 SCHEMA = {
     "type": "object",
@@ -53,7 +53,7 @@ SCHEMA = {
 history = []
 print("What do you want the song to feel like? Press Enter on an empty line to stop.")
 while message := input("\n> "):
-    prompt = "\n".join(history + [f"Artist: {message}"])
+    prompt = "\n".join(history + [f"Track now:\n{core.state()}", f"Artist: {message}"])
     # Runs through the claude command on the artist's subscription. An empty folder keeps it from reading this project's CLAUDE.md.
     result = json.loads(subprocess.run(
         ["claude", "-p", prompt,

@@ -44,6 +44,15 @@ def set_control(track, effect, setting, value):
     send({"cmd": "set", "value": raw, **target})
 
 
+def state():
+    """The selected track's effects and settings, written the way Ableton shows them."""
+    lines = []
+    for d in effects(send({"cmd": "selected"})):
+        lines.append(d["name"])
+        lines += [f"  {p['name']} = {p['display']}" for p in d["parameters"]]
+    return "\n".join(lines) or "no effects"
+
+
 def apply(controls):
     """Carry out each control on the track selected in Ableton. Returns one line per rejected control."""
     track = send({"cmd": "selected"})

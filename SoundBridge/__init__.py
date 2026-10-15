@@ -40,7 +40,7 @@ class SoundBridge(ControlSurface):
                         {
                             "name": d.name,
                             "parameters": [
-                                {"name": p.name, "value": p.value, "min": p.min, "max": p.max}
+                                {"name": p.name, "value": p.value, "min": p.min, "max": p.max, "display": p.str_for_value(p.value)}
                                 for p in d.parameters
                             ],
                         }
