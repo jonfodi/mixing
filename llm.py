@@ -53,9 +53,8 @@ SCHEMA = {
 }
 
 
-history = []
-print("What do you want the song to feel like? Press Enter on an empty line to stop.")
-while message := input("\n> "):
+def turn(history, message):
+    """One turn: ask the LLM, print its reply, apply its controls, and add the turn to history."""
     prompt = "\n".join(history + [f"Track now:\n{core.state()}", f"Artist: {message}"])
     # Runs through the claude command on the artist's subscription. An empty folder keeps it from reading this project's CLAUDE.md.
     result = json.loads(subprocess.run(
@@ -75,3 +74,11 @@ while message := input("\n> "):
     for r in rejected:
         print(f"\nrejected: {r}")
     history += [f"Artist: {message}", f"You: {json.dumps(reply)}"] + [f"Rejected: {r}" for r in rejected]
+    return reply, rejected
+
+
+if __name__ == "__main__":
+    history = []
+    print("What do you want the song to feel like? Press Enter on an empty line to stop.")
+    while message := input("\n> "):
+        turn(history, message)
