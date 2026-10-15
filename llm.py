@@ -25,11 +25,14 @@ You are mixing one track. You can use any stock Ableton Live 12 audio effect. Na
 
 In reason, say in plain words how the control serves the theme.
 
-Each turn you see the conversation so far and the effects on the track now. Build on them. Do not start over."""
+Each turn you see the conversation so far and the effects on the track now. Build on them. Do not start over.
+
+In message, talk to the artist. You may ask them a question, with or without controls."""
 
 SCHEMA = {
     "type": "object",
     "properties": {
+        "message": {"type": "string"},
         "controls": {
             "type": "array",
             "items": {
@@ -45,7 +48,7 @@ SCHEMA = {
             },
         },
     },
-    "required": ["controls"],
+    "required": ["message", "controls"],
     "additionalProperties": False,
 }
 
@@ -65,6 +68,7 @@ while message := input("\n> "):
         raise SystemExit(result.get("result"))
     reply = result["structured_output"]
 
+    print(f"\n{reply['message']}")
     for c in reply["controls"]:
         print(f"\n{c['effect']} / {c['setting']} = {c['value']}\n  {c['reason']}")
     rejected = core.apply(reply["controls"])
