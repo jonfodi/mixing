@@ -11,7 +11,16 @@ example:
 - the classification tool splits the artist input into theme discussion and direct control requests 
 - the theme tool uses the theme discussion text to create/update the theme 
 
-both these tools can be tested and worked on in isolation. theme tool is a core part of the product. its system prompt and other features will be key to get right and test to ensure product works as expected. agent can still call either whenever 
+both these tools can be tested and worked on in isolation. 
+ - theme tool is a core part of the product. its system prompt and other features will be key to get right and test to ensure product works as expected. 
+ - we can be more resource-efficient this way by optimizing which models we call for which step 
+ - agent can still call either whenever
+
+## Context Engineering / Declarative Flow
+- system prompts give the agents guidance on when to call which tools 
+- tool definitions tell the agents what the tools are, lets them decide when to use 
+- code is still used when the set of steps is concrete 
+- guardrails exist around hard volume limits, retries, number of iterations, and rollbacks 
 
 **State Management**
 - Context Management 
@@ -66,14 +75,7 @@ Ableton down and Claude down both cause #4. a turn that stops halfway leaves the
 - snapshot the track at the start of each turn
 - if the turn fails, compare Ableton with the snapshot and put back every difference
 - delete effects added after the snapshot and set back changed values
-- read again and confirm the track matches the snapshot
-- stop if the artist moved an effect. values could land on the wrong effect
-- a turn that hits the step cap keeps its changes because they are valid
-- demo: fault injection after an insert. 2 model calls and the track is back to the snapshot
 
-**5. Agent Describes The Wrong Track (next)**
-- after every change, read the track back and tell the model what is actually there
-- Ableton is the source of truth. the model's belief is not
 
 **6. Artist Hand Edits Undone**
 - only put back the stems the agent touched this turn

@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 import ableton
 from client import BridgeDown
+from organize import split
+from theme import build as build_theme
 
 # Settings typed in the terminal win over .env.
 load_dotenv()
@@ -21,7 +23,7 @@ SYSTEM = """You are a mix engineer working in an artist's Ableton Live 12 projec
 
 The artist tells you what they want. It may be a feeling, a story, a reference song, a part of the sound, or an exact effect setting.
 
-Find the theme behind their words: the message or emotion they want to communicate. Then choose controls that communicate it. Every control should trace back to the theme.
+The theme is the message or emotion they want to communicate. The theme so far is at the top of each message. When the artist says anything about feeling, story, or meaning, call organize first. It updates the theme and gives back their concrete asks. Then choose controls that communicate the theme. Every control should trace back to it.
 
 When you are done, reply to the artist. Say in plain words what you changed and why. You may ask them a question.
 
@@ -38,6 +40,10 @@ DOWN = "Ableton stopped responding. Check Ableton and try again."
 down = None
 # Stems the agent changed this turn. Rollback puts back only these, so the artist's hand edits elsewhere survive.
 touched = set()
+# What the agent knows about the song across turns. Only the theme module writes the theme.
+brief = {"theme": ""}
+# The artist's message this turn. organize reads it here so the model never has to copy it.
+current = ""
 
 
 def stop(e):
@@ -63,6 +69,23 @@ class Control(TypedDict):
     setting: str
     value: str
     reason: str
+
+
+@beta_tool
+def organize() -> str:
+    """Sort the artist's message into theme material and concrete asks, and update the song's theme from it.
+    Call it when the artist says anything about feeling, story, or meaning, even alongside concrete asks.
+    Skip it for short follow-ups like "a bit more". Returns the updated theme and the asks."""
+    # The agent decides when to call this. Inside, the steps are fixed: split, then update the theme if there is material.
+    try:
+        s = split(current)
+        if s.theme_material:
+            brief["theme"] = build_theme(brief["theme"], s.theme_material)
+    except anthropic.APIError as e:
+        # The main agent can still act on the message as written, so this does not stop the turn.
+        return f"organize failed ({type(e).__name__}). Work from the artist's message as written."
+    asks = "\n".join(f"- {a}" for a in s.asks) or "none"
+    return f"Theme: {brief['theme'] or 'none yet'}\n\nAsks:\n{asks}"
 
 
 @beta_tool
@@ -106,14 +129,15 @@ def turn(history, message):
     """One artist turn. The runner sends the messages to the model, runs any tools it asks for, and repeats until it replies.
     history is the whole conversation as messages. The model remembers nothing, so every request sends all of it.
     Adds this turn's messages to history. Returns the reply and one step per model call."""
-    global down
+    global down, current
     down = None
+    current = message
     touched.clear()
     steps = []
     try:
         # The snapshot is what the track looked like before the agent touched it. Its keys are the stems.
         before = ableton.snapshot()
-        known = f"Effects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(before)}"
+        known = f"Theme so far: {brief['theme'] or 'none yet'}\n\nEffects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(before)}"
     except BridgeDown:
         # Ableton is down before the model is called, so the turn costs nothing.
         print(f"\n{DOWN}")
@@ -123,12 +147,17 @@ def turn(history, message):
         model=MODEL, max_tokens=16000, system=SYSTEM,
         # The model thinks before each step. summarized sends back a readable summary of that thinking.
         thinking={"type": "adaptive", "display": "summarized"},
-        tools=[read_track, apply_controls], messages=history, max_iterations=MAX_STEPS,
+        tools=[organize, read_track, apply_controls], messages=history, max_iterations=MAX_STEPS,
     )
     start = time.monotonic()
     try:
         for response in runner:
             ms = round((time.monotonic() - start) * 1000)
+            thinking = "".join(b.thinking for b in response.content if b.type == "thinking")
+            # Printed before the tools run, so subagent lines show up under their step.
+            print(f"\nstep {len(steps) + 1} · {ms} ms · in {response.usage.input_tokens} out {response.usage.output_tokens}")
+            if thinking:
+                print(f"  thinking: {thinking}")
             # Runs the tools the model asked for. None if it asked for none.
             results = runner.generate_tool_call_response()
             # The runner keeps its own copy of the messages, so we keep ours for the next turn.
@@ -138,15 +167,12 @@ def turn(history, message):
             calls = [b for b in response.content if b.type == "tool_use"]
             outputs = [r["content"] for r in results["content"]] if results else []
             step = {
-                "thinking": "".join(b.thinking for b in response.content if b.type == "thinking"),
+                "thinking": thinking,
                 "tools": [{"name": c.name, "input": c.input, "result": o} for c, o in zip(calls, outputs)],
                 "usage": response.usage.to_dict(),
                 "ms": ms,
             }
             steps.append(step)
-            print(f"\nstep {len(steps)} · {ms} ms · in {step['usage']['input_tokens']} out {step['usage']['output_tokens']}")
-            if step["thinking"]:
-                print(f"  thinking: {step['thinking']}")
             for t in step["tools"]:
                 print(f"  {t['name']}({t['input']})")
                 print("    -> " + str(t["result"]).replace("\n", "\n       "))
