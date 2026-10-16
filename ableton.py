@@ -12,21 +12,33 @@ def number(text):
     return n / 1000 if m[3] == "ms" else n
 
 
-def effects(track):
-    return next(t for t in send({"cmd": "tracks"}) if t["name"] == track)["devices"]
+def stems():
+    return [t["name"] for t in send({"cmd": "tracks"})]
 
 
-def set_control(track, effect, setting, value):
-    names = [d["name"] for d in effects(track)]
+def available():
+    """Every audio effect Ableton can insert, by name."""
+    return send({"cmd": "effects"})
+
+
+def effects(stem):
+    for t in send({"cmd": "tracks"}):
+        if t["name"] == stem:
+            return t["devices"]
+    raise LookupError(f"no stem named {stem}")
+
+
+def set_control(stem, effect, setting, value):
+    names = [d["name"] for d in effects(stem)]
     if effect not in names:
         # Ableton raises an error for anything that is not a stock effect.
-        send({"cmd": "insert", "track": track, "device": effect})
-        names = [d["name"] for d in effects(track)]
+        send({"cmd": "insert", "track": stem, "device": effect})
+        names = [d["name"] for d in effects(stem)]
     index = names.index(effect)
-    settings = [p["name"] for p in effects(track)[index]["parameters"]]
+    settings = [p["name"] for p in effects(stem)[index]["parameters"]]
     if setting not in settings:
         raise LookupError(f"no setting named {setting}. Settings are: {', '.join(settings)}")
-    target = {"track": track, "device": index, "param": setting}
+    target = {"track": stem, "device": index, "param": setting}
     # Ableton's 0 to 1 scale is uneven, so pick the sampled value whose display text is closest.
     samples = send({"cmd": "displays", **target})
     want = number(value)
@@ -44,22 +56,21 @@ def set_control(track, effect, setting, value):
     send({"cmd": "set", "value": raw, **target})
 
 
-def state():
-    """The selected track's effects and settings, written the way Ableton shows them."""
+def state(stem):
+    """A stem's effects and settings, written the way Ableton shows them."""
     lines = []
-    for d in effects(send({"cmd": "selected"})):
+    for d in effects(stem):
         lines.append(d["name"])
         lines += [f"  {p['name']} = {p['display']}" for p in d["parameters"]]
     return "\n".join(lines) or "no effects"
 
 
-def apply(controls):
-    """Carry out each control on the track selected in Ableton. Returns one line per rejected control."""
-    track = send({"cmd": "selected"})
+def apply(stem, controls):
+    """Carry out each control on a stem. Returns one line per rejected control."""
     rejected = []
     for c in controls:
         try:
-            set_control(track, c["effect"], c["setting"], c["value"])
+            set_control(stem, c["effect"], c["setting"], c["value"])
         except (LookupError, RuntimeError) as e:
             rejected.append(f"{c['effect']} / {c['setting']} = {c['value']}: {e}")
     return rejected

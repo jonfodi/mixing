@@ -1,19 +1,20 @@
-import json
 import os
-import subprocess
-import tempfile
-from pathlib import Path
+import time
+from typing import TypedDict
 
-import core
+import anthropic
+from anthropic import beta_tool
+from anthropic.lib.tools import ToolError
+from dotenv import load_dotenv
 
-env = Path(__file__).with_name(".env")
-for line in env.read_text().splitlines() if env.exists() else []:
-    if "=" in line and not line.startswith("#"):
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+import ableton
+
+# Settings typed in the terminal win over .env.
+load_dotenv()
 
 # haiku is cheap for checking the wiring. Use opus to judge taste.
-MODEL = os.environ.get("MODEL", "haiku")
+MODEL = os.environ.get("MODEL", "claude-haiku-5-5")
+MAX_STEPS = 8
 
 SYSTEM = """You are a mix engineer working in an artist's Ableton Live 12 project.
 
@@ -21,60 +22,86 @@ The artist tells you what they want. It may be a feeling, a story, a reference s
 
 Find the theme behind their words: the message or emotion they want to communicate. Then choose controls that communicate it. Every control should trace back to the theme.
 
-You are mixing one track. You can use any stock Ableton Live 12 audio effect. Name each effect and setting exactly as Ableton shows them. Write each value the way Ableton displays it, with its unit, for example: Reverb, Decay Time, 3 s. For a setting that is a choice, write the choice as Ableton shows it.
+When you are done, reply to the artist. Say in plain words what you changed and why. You may ask them a question.
 
-In reason, say in plain words how the control serves the theme.
+Use only effects from the list you are given. Name each setting exactly as Ableton shows it. Write each value the way Ableton displays it, with its unit, for example: Reverb, Decay Time, 3 s. For a setting that is a choice, write the choice as Ableton shows it.
 
-Each turn you see the conversation so far and the effects on the track now. Build on them. Do not start over.
+The artist may turn dials by hand between turns. Read before you change an effect already on it. Build on what is there. Do not start over."""
 
-In message, talk to the artist. You may ask them a question, with or without controls."""
 
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "message": {"type": "string"},
-        "controls": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "effect": {"type": "string"},
-                    "setting": {"type": "string"},
-                    "value": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["effect", "setting", "value", "reason"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["message", "controls"],
-    "additionalProperties": False,
-}
+# The tools. The docstrings are what the model reads. Each tool hands its work to the Ableton adapter.
+
+class Control(TypedDict):
+    effect: str
+    setting: str
+    value: str
+    reason: str
+
+
+@beta_tool
+def read_track(stem: str) -> str:
+    """See the effects on one stem and their settings now.
+
+    Args:
+        stem: the stem's name, exactly as listed.
+    """
+    try:
+        return ableton.state(stem)
+    except LookupError as e:
+        # A ToolError goes back to the model as an error it can fix.
+        raise ToolError(str(e))
+
+
+@beta_tool
+def apply_controls(stem: str, controls: list[Control]) -> str:
+    """Set controls on one stem. Returns any controls Ableton rejected, with the reason. Fix them if you can.
+
+    Args:
+        stem: the stem's name, exactly as listed.
+        controls: each one an effect, a setting, a value, and a reason. In reason, say in plain words how the control serves the theme.
+    """
+    rejected = ableton.apply(stem, controls)
+    return "\n".join(f"rejected: {r}" for r in rejected) or "all applied"
+
+
+client = anthropic.Anthropic()
+
 
 
 def turn(history, message):
-    """One turn: ask the LLM, print its reply, apply its controls, and add the turn to history."""
-    prompt = "\n".join(history + [f"Track now:\n{core.state()}", f"Artist: {message}"])
-    # Runs through the claude command on the artist's subscription. An empty folder keeps it from reading this project's CLAUDE.md.
-    result = json.loads(subprocess.run(
-        ["claude", "-p", prompt,
-         "--model", MODEL, "--output-format", "json", "--json-schema", json.dumps(SCHEMA),
-         "--system-prompt", SYSTEM, "--tools", "", "--strict-mcp-config", "--no-session-persistence"],
-        capture_output=True, text=True, check=True, cwd=tempfile.mkdtemp(),
-    ).stdout)
-    if result["is_error"]:
-        raise SystemExit(result.get("result"))
-    reply = result["structured_output"]
-
-    print(f"\n{reply['message']}")
-    for c in reply["controls"]:
-        print(f"\n{c['effect']} / {c['setting']} = {c['value']}\n  {c['reason']}")
-    rejected = core.apply(reply["controls"])
-    for r in rejected:
-        print(f"\nrejected: {r}")
-    history += [f"Artist: {message}", f"You: {json.dumps(reply)}"] + [f"Rejected: {r}" for r in rejected]
-    return reply, rejected
+    """One artist turn. The runner sends the messages to the model, runs any tools it asks for, and repeats until it replies.
+    history is the whole conversation as messages. The model remembers nothing, so every request sends all of it.
+    Adds this turn's messages to history. Returns the reply and one step per model call."""
+    known = f"Effects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(ableton.stems())}"
+    history.append({"role": "user", "content": f"{known}\n\n{message}"})
+    runner = client.beta.messages.tool_runner(
+        model=MODEL, max_tokens=16000, system=SYSTEM,
+        tools=[read_track, apply_controls], messages=history, max_iterations=MAX_STEPS,
+    )
+    steps = []
+    start = time.monotonic()
+    for response in runner:
+        ms = round((time.monotonic() - start) * 1000)
+        # Runs the tools the model asked for. None if it asked for none.
+        results = runner.generate_tool_call_response()
+        # The runner keeps its own copy of the messages, so we keep ours for the next turn.
+        history.append({"role": "assistant", "content": response.content})
+        if results:
+            history.append(results)
+        calls = [b for b in response.content if b.type == "tool_use"]
+        outputs = [r["content"] for r in results["content"]] if results else []
+        step = {
+            "tools": [{"name": c.name, "input": c.input, "result": o} for c, o in zip(calls, outputs)],
+            "usage": response.usage.to_dict(),
+            "ms": ms,
+        }
+        steps.append(step)
+        start = time.monotonic()
+    reply = "".join(b.text for b in response.content if b.type == "text")
+    if response.stop_reason == "tool_use":
+        reply = f"I stopped after {MAX_STEPS} steps without finishing. Tell me what you hear."
+    print(f"\n{reply}")
+    return reply, steps
 
 
 if __name__ == "__main__":

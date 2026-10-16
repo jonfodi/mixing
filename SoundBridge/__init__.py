@@ -49,6 +49,9 @@ class SoundBridge(ControlSurface):
                 }
                 for t in tracks
             ]
+        # Every audio effect in Ableton's browser, by the name insert accepts.
+        if msg["cmd"] == "effects":
+            return [item.name for item in self.application().browser.audio_effects.children]
         # The track the artist last clicked in Ableton.
         if msg["cmd"] == "selected":
             return self.song().view.selected_track.name
@@ -60,7 +63,7 @@ class SoundBridge(ControlSurface):
         if msg["cmd"] == "set":
             param.value = msg["value"]
             return {"ok": True}
-        # The text Ableton shows for 201 evenly spaced values, so the core can convert real units.
+        # The text Ableton shows for 201 evenly spaced values, so the adapter can convert real units.
         if msg["cmd"] == "displays":
             values = [param.min + (param.max - param.min) * i / 200 for i in range(201)]
             return [[v, param.str_for_value(v)] for v in values]
