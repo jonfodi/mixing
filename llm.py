@@ -8,6 +8,7 @@ from anthropic.lib.tools import ToolError
 from dotenv import load_dotenv
 
 import ableton
+from client import BridgeDown
 
 # Settings typed in the terminal win over .env.
 load_dotenv()
@@ -31,6 +32,18 @@ The artist may turn dials by hand between turns. Read before you change an effec
 
 # The tools. The docstrings are what the model reads. Each tool hands its work to the Ableton adapter.
 
+DOWN = "Ableton stopped responding. Check Ableton and try again."
+
+# Set when Ableton stops answering. The model cannot fix that, so the turn ends after this step.
+down = None
+
+
+def stop(e):
+    global down
+    down = e
+    return "stopped: Ableton is not responding."
+
+
 class Control(TypedDict):
     effect: str
     setting: str
@@ -50,6 +63,8 @@ def read_track(stem: str) -> str:
     except LookupError as e:
         # A ToolError goes back to the model as an error it can fix.
         raise ToolError(str(e))
+    except BridgeDown as e:
+        return stop(e)
 
 
 @beta_tool
@@ -60,11 +75,15 @@ def apply_controls(stem: str, controls: list[Control]) -> str:
         stem: the stem's name, exactly as listed.
         controls: each one an effect, a setting, a value, and a reason. In reason, say in plain words how the control serves the theme.
     """
-    rejected = ableton.apply(stem, controls)
+    try:
+        rejected = ableton.apply(stem, controls)
+    except BridgeDown as e:
+        return stop(e)
     return "\n".join(f"rejected: {r}" for r in rejected) or "all applied"
 
 
-client = anthropic.Anthropic()
+# The SDK retries twice on its own. 60 s stops a hung request from freezing the program. The default is 10 minutes.
+client = anthropic.Anthropic(timeout=60.0)
 
 
 
@@ -72,7 +91,15 @@ def turn(history, message):
     """One artist turn. The runner sends the messages to the model, runs any tools it asks for, and repeats until it replies.
     history is the whole conversation as messages. The model remembers nothing, so every request sends all of it.
     Adds this turn's messages to history. Returns the reply and one step per model call."""
-    known = f"Effects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(ableton.stems())}"
+    global down
+    down = None
+    steps = []
+    try:
+        known = f"Effects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(ableton.stems())}"
+    except BridgeDown:
+        # Ableton is down before the model is called, so the turn costs nothing.
+        print(f"\n{DOWN}")
+        return DOWN, steps
     history.append({"role": "user", "content": f"{known}\n\n{message}"})
     runner = client.beta.messages.tool_runner(
         model=MODEL, max_tokens=16000, system=SYSTEM,
@@ -80,35 +107,43 @@ def turn(history, message):
         thinking={"type": "adaptive", "display": "summarized"},
         tools=[read_track, apply_controls], messages=history, max_iterations=MAX_STEPS,
     )
-    steps = []
     start = time.monotonic()
-    for response in runner:
-        ms = round((time.monotonic() - start) * 1000)
-        # Runs the tools the model asked for. None if it asked for none.
-        results = runner.generate_tool_call_response()
-        # The runner keeps its own copy of the messages, so we keep ours for the next turn.
-        history.append({"role": "assistant", "content": response.content})
-        if results:
-            history.append(results)
-        calls = [b for b in response.content if b.type == "tool_use"]
-        outputs = [r["content"] for r in results["content"]] if results else []
-        step = {
-            "thinking": "".join(b.thinking for b in response.content if b.type == "thinking"),
-            "tools": [{"name": c.name, "input": c.input, "result": o} for c, o in zip(calls, outputs)],
-            "usage": response.usage.to_dict(),
-            "ms": ms,
-        }
-        steps.append(step)
-        print(f"\nstep {len(steps)} · {ms} ms · in {step['usage']['input_tokens']} out {step['usage']['output_tokens']}")
-        if step["thinking"]:
-            print(f"  thinking: {step['thinking']}")
-        for t in step["tools"]:
-            print(f"  {t['name']}({t['input']})")
-            print("    -> " + str(t["result"]).replace("\n", "\n       "))
-        start = time.monotonic()
-    reply = "".join(b.text for b in response.content if b.type == "text")
-    if response.stop_reason == "tool_use":
-        reply = f"I stopped after {MAX_STEPS} steps without finishing. Tell me what you hear."
+    try:
+        for response in runner:
+            ms = round((time.monotonic() - start) * 1000)
+            # Runs the tools the model asked for. None if it asked for none.
+            results = runner.generate_tool_call_response()
+            # The runner keeps its own copy of the messages, so we keep ours for the next turn.
+            history.append({"role": "assistant", "content": response.content})
+            if results:
+                history.append(results)
+            calls = [b for b in response.content if b.type == "tool_use"]
+            outputs = [r["content"] for r in results["content"]] if results else []
+            step = {
+                "thinking": "".join(b.thinking for b in response.content if b.type == "thinking"),
+                "tools": [{"name": c.name, "input": c.input, "result": o} for c, o in zip(calls, outputs)],
+                "usage": response.usage.to_dict(),
+                "ms": ms,
+            }
+            steps.append(step)
+            print(f"\nstep {len(steps)} · {ms} ms · in {step['usage']['input_tokens']} out {step['usage']['output_tokens']}")
+            if step["thinking"]:
+                print(f"  thinking: {step['thinking']}")
+            for t in step["tools"]:
+                print(f"  {t['name']}({t['input']})")
+                print("    -> " + str(t["result"]).replace("\n", "\n       "))
+            if down:
+                break
+            start = time.monotonic()
+    except anthropic.APIError as e:
+        # The SDK already retried. The history stays valid, so the artist can just try again.
+        reply = f"I could not reach Claude ({type(e).__name__}). Try again in a moment."
+    else:
+        reply = "".join(b.text for b in response.content if b.type == "text")
+        if down:
+            reply = DOWN
+        elif response.stop_reason == "tool_use":
+            reply = f"I stopped after {MAX_STEPS} steps without finishing. Tell me what you hear."
     print(f"\n{reply}")
     return reply, steps
 
