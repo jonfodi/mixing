@@ -1,5 +1,6 @@
 import functools
 import os
+import sqlite3
 import sys
 import time
 from typing import TypedDict
@@ -289,4 +290,11 @@ if __name__ == "__main__":
             after = ableton.snapshot()
         except BridgeDown:
             after = None
-        store.save_turn(db, session, len(turns), message, reply, steps, turns[-1], after, brief, history, time.monotonic() - start)
+        try:
+            store.save_turn(db, session, len(turns), message, reply, steps, turns[-1], after, brief, history, time.monotonic() - start)
+        except sqlite3.Error as e:
+            # The data matters more than the session, so the session stops. This turn is printed so it is not lost.
+            print(f"\nI could not save this session ({e}). Nothing after this turn would be kept, so I stopped.")
+            print("Fix the disk and run with --resume. This turn as JSON:\n")
+            print(store.dump({"session": session, "message": message, "reply": reply, "steps": steps, "turn": turns[-1], "after": after, "brief": brief}))
+            sys.exit(1)

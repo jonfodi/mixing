@@ -5,6 +5,8 @@ import os
 import sqlite3
 import subprocess
 
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+
 DB = os.environ.get("SOUND_DB", "sound.db")
 
 SCHEMA = """
@@ -52,14 +54,17 @@ def start(db, model, variant):
     return cur.lastrowid
 
 
+# A locked file often clears in a moment. A full disk does not, so after 3 tries the error goes up and the session stops.
+@retry(retry=retry_if_exception_type(sqlite3.Error), stop=stop_after_attempt(3), wait=wait_fixed(0.5), reraise=True)
 def save_turn(db, session, n, message, reply, steps, turn, after, brief, history, seconds):
-    db.execute(
-        "insert into turns values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (session, n, message, reply, dump(steps), dump(turn["before"]), dump(after), dump(turn["touched"]), dump(brief), seconds),
-    )
-    # The whole conversation, so --resume can send it to the model again.
-    db.execute("update sessions set history = ? where id = ?", (dump(history), session))
-    db.commit()
+    # One transaction. A failure undoes both writes, so a retry starts clean.
+    with db:
+        db.execute(
+            "insert into turns values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session, n, message, reply, dump(steps), dump(turn["before"]), dump(after), dump(turn["touched"]), dump(brief), seconds),
+        )
+        # The whole conversation, so --resume can send it to the model again.
+        db.execute("update sessions set history = ? where id = ?", (dump(history), session))
 
 
 def load(db, session=None):
