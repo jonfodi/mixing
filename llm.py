@@ -1,3 +1,4 @@
+import functools
 import os
 import time
 from typing import TypedDict
@@ -29,6 +30,8 @@ When you are done, reply to the artist. Say in plain words what you changed and 
 
 Use only effects from the list you are given. Name each setting exactly as Ableton shows it. Write each value the way Ableton displays it, with its unit, for example: Reverb, Decay Time, 3 s. For a setting that is a choice, write the choice as Ableton shows it.
 
+Decisions at the top of each message list what the artist liked and rejected. Never bring back something they rejected unless they ask for it.
+
 The artist may turn dials by hand between turns. Read before you change an effect already on it. Build on what is there. Do not start over."""
 
 
@@ -41,7 +44,14 @@ down = None
 # Stems the agent changed this turn. Rollback puts back only these, so the artist's hand edits elsewhere survive.
 touched = set()
 # What the agent knows about the song across turns. Only the theme module writes the theme.
-brief = {"theme": ""}
+brief = {"theme": "", "decisions": []}
+# One entry per turn: the snapshot from its start and the stems it touched. revert reads these.
+turns = []
+
+
+def show_brief():
+    decisions = "\n".join(f"- {d}" for d in brief["decisions"]) or "none yet"
+    return f"Theme so far: {brief['theme'] or 'none yet'}\n\nDecisions:\n{decisions}"
 # The artist's message this turn. organize reads it here so the model never has to copy it.
 current = ""
 
@@ -89,6 +99,47 @@ def organize() -> str:
 
 
 @beta_tool
+def record_feedback(liked: bool, what: str, why: str) -> str:
+    """Save what the artist liked or rejected so later turns respect it. Call it whenever the artist reacts to a change.
+
+    Args:
+        liked: true if the artist liked it. false if they rejected it.
+        what: the change, specific enough to recognize later. For example: 6 s reverb on VOCALS.
+        why: the artist's reason in their words, or "no reason given".
+    """
+    brief["decisions"].append(f"{'liked' if liked else 'rejected'}: {what} ({why})")
+    return "saved"
+
+
+@beta_tool
+def revert(turns_back: int = 1) -> str:
+    """Put the track back to how it was before an earlier turn. Use it when the artist wants to undo, go back, or return to an earlier version.
+
+    Args:
+        turns_back: how many turns to undo. 1 undoes the last turn.
+    """
+    # This turn is turns[-1], so the earlier turns are everything before it.
+    if not 1 <= turns_back < len(turns):
+        raise ToolError(f"there are {len(turns) - 1} earlier turns to undo")
+    past = turns[-1 - turns_back:-1]
+    target = past[0]["before"]
+    # Only the stems those turns changed. Hand edits on other stems survive.
+    stems = set().union(*(t["touched"] for t in past)) & target.keys()
+    if not stems:
+        return "nothing to undo. those turns changed nothing on the track."
+    # If this turn fails later, rollback puts back what was there before the revert.
+    touched.update(stems)
+    try:
+        ok = all([ableton.reconcile(s, target[s]) for s in stems])
+        # Verify after write: tell the model what is on the track now.
+        now = "\n\n".join(f"{s}:\n{ableton.state(s)}" for s in sorted(stems))
+    except BridgeDown as e:
+        return stop(e)
+    status = "reverted" if ok else "could not fully revert because an effect was moved by hand"
+    return f"{status} {turns_back} turn(s). Now on the track:\n\n{now}"
+
+
+@beta_tool
 def read_track(stem: str) -> str:
     """See the effects on one stem and their settings now.
 
@@ -124,30 +175,44 @@ def apply_controls(stem: str, controls: list[Control]) -> str:
 client = anthropic.Anthropic(timeout=60.0)
 
 
+# Stock effects do not change during a session, so they sit in the system prompt where they cache.
+# functools.cache keeps the first result. A failed fetch is not kept, so the next turn tries again.
+@functools.cache
+def system_prompt():
+    return f"{SYSTEM}\n\nEffects you can use: {', '.join(ableton.available())}"
+
+
 
 def turn(history, message):
     """One artist turn. The runner sends the messages to the model, runs any tools it asks for, and repeats until it replies.
     history is the whole conversation as messages. The model remembers nothing, so every request sends all of it.
     Adds this turn's messages to history. Returns the reply and one step per model call."""
-    global down, current
+    global down, current, touched
     down = None
     current = message
-    touched.clear()
+    # A new set each turn, because turns keeps every turn's set for revert.
+    touched = set()
     steps = []
     try:
         # The snapshot is what the track looked like before the agent touched it. Its keys are the stems.
         before = ableton.snapshot()
-        known = f"Theme so far: {brief['theme'] or 'none yet'}\n\nEffects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(before)}"
+        turns.append({"before": before, "touched": touched})
+        system = system_prompt()
+        # Only what changes between turns. The stems stay here because the artist can add or rename tracks.
+        known = f"Turn {len(turns)}.\n\n{show_brief()}\n\nStems: {', '.join(before)}"
     except BridgeDown:
         # Ableton is down before the model is called, so the turn costs nothing.
         print(f"\n{DOWN}")
         return DOWN, steps
     history.append({"role": "user", "content": f"{known}\n\n{message}"})
     runner = client.beta.messages.tool_runner(
-        model=MODEL, max_tokens=16000, system=SYSTEM,
+        model=MODEL, max_tokens=16000, system=system,
+        # Automatic caching: the cache point moves to the end of the request on every step,
+        # so each step reuses everything the last one sent.
+        cache_control={"type": "ephemeral"},
         # The model thinks before each step. summarized sends back a readable summary of that thinking.
         thinking={"type": "adaptive", "display": "summarized"},
-        tools=[organize, read_track, apply_controls], messages=history, max_iterations=MAX_STEPS,
+        tools=[organize, read_track, apply_controls, record_feedback, revert], messages=history, max_iterations=MAX_STEPS,
     )
     start = time.monotonic()
     try:
@@ -155,7 +220,9 @@ def turn(history, message):
             ms = round((time.monotonic() - start) * 1000)
             thinking = "".join(b.thinking for b in response.content if b.type == "thinking")
             # Printed before the tools run, so subagent lines show up under their step.
-            print(f"\nstep {len(steps) + 1} · {ms} ms · in {response.usage.input_tokens} out {response.usage.output_tokens}")
+            # in is the new part at full price. cached is reused from the last request at about 10% of the price.
+            u = response.usage
+            print(f"\nstep {len(steps) + 1} · {ms} ms · in {u.input_tokens} cached {u.cache_read_input_tokens} out {u.output_tokens}")
             if thinking:
                 print(f"  thinking: {thinking}")
             # Runs the tools the model asked for. None if it asked for none.
