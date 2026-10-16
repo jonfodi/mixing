@@ -40,9 +40,9 @@ framed by what the artist experiences. the key question for each cause: can the 
 | 1 | wrong change | model asks for a setting or value that does not exist | handled |
 | 2 | waiting for nothing | Ableton or Claude is down and the agent keeps trying | handled |
 | 3 | two of the same effect | a retry adds the effect a second time | prevented |
-| 4 | half changed track | effect added but settings never set. or only some controls applied | not yet |
+| 4 | half changed track | effect added but settings never set. or only some controls applied | handled |
 | 5 | agent describes the wrong track | agent thinks nothing changed but Ableton has new effects | not yet |
-| 6 | artist hand edits undone | a rollback undoes dials the artist turned | not yet |
+| 6 | artist hand edits undone | a rollback undoes dials the artist turned | handled |
 
 Ableton down and Claude down both cause #4. a turn that stops halfway leaves the track half changed either way
 
@@ -62,15 +62,20 @@ Ableton down and Claude down both cause #4. a turn that stops halfway leaves the
 - insert is never retried. it is the only bridge command that is not idempotent
 - set_control checks for the effect before it inserts
 
-**4. Half Changed Track (next)**
+**4. Half Changed Track**
 - snapshot the track at the start of each turn
 - if the turn fails, compare Ableton with the snapshot and put back every difference
+- delete effects added after the snapshot and set back changed values
+- read again and confirm the track matches the snapshot
+- stop if the artist moved an effect. values could land on the wrong effect
+- a turn that hits the step cap keeps its changes because they are valid
+- demo: fault injection after an insert. 2 model calls and the track is back to the snapshot
 
 **5. Agent Describes The Wrong Track (next)**
 - after every change, read the track back and tell the model what is actually there
 - Ableton is the source of truth. the model's belief is not
 
-**6. Artist Hand Edits Undone (next)**
+**6. Artist Hand Edits Undone**
 - only put back the stems the agent touched this turn
 
 **Testing**

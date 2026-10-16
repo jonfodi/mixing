@@ -36,12 +36,26 @@ DOWN = "Ableton stopped responding. Check Ableton and try again."
 
 # Set when Ableton stops answering. The model cannot fix that, so the turn ends after this step.
 down = None
+# Stems the agent changed this turn. Rollback puts back only these, so the artist's hand edits elsewhere survive.
+touched = set()
 
 
 def stop(e):
     global down
     down = e
     return "stopped: Ableton is not responding."
+
+
+def rollback(before):
+    """Put every touched stem back to the snapshot from the start of the turn. Returns what to tell the artist."""
+    if not touched:
+        return "Nothing on the track was changed."
+    try:
+        if all([ableton.reconcile(stem, before[stem]) for stem in touched & before.keys()]):
+            return "I put the track back the way it was."
+    except (BridgeDown, RuntimeError):
+        pass
+    return "Some changes from this turn may still be on the track."
 
 
 class Control(TypedDict):
@@ -75,6 +89,7 @@ def apply_controls(stem: str, controls: list[Control]) -> str:
         stem: the stem's name, exactly as listed.
         controls: each one an effect, a setting, a value, and a reason. In reason, say in plain words how the control serves the theme.
     """
+    touched.add(stem)
     try:
         rejected = ableton.apply(stem, controls)
     except BridgeDown as e:
@@ -93,9 +108,12 @@ def turn(history, message):
     Adds this turn's messages to history. Returns the reply and one step per model call."""
     global down
     down = None
+    touched.clear()
     steps = []
     try:
-        known = f"Effects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(ableton.stems())}"
+        # The snapshot is what the track looked like before the agent touched it. Its keys are the stems.
+        before = ableton.snapshot()
+        known = f"Effects you can use: {', '.join(ableton.available())}\n\nStems: {', '.join(before)}"
     except BridgeDown:
         # Ableton is down before the model is called, so the turn costs nothing.
         print(f"\n{DOWN}")
@@ -137,11 +155,11 @@ def turn(history, message):
             start = time.monotonic()
     except anthropic.APIError as e:
         # The SDK already retried. The history stays valid, so the artist can just try again.
-        reply = f"I could not reach Claude ({type(e).__name__}). Try again in a moment."
+        reply = f"I could not reach Claude ({type(e).__name__}). {rollback(before)} Try again in a moment."
     else:
         reply = "".join(b.text for b in response.content if b.type == "text")
         if down:
-            reply = DOWN
+            reply = f"Ableton stopped responding. {rollback(before)} Check Ableton and try again."
         elif response.stop_reason == "tool_use":
             reply = f"I stopped after {MAX_STEPS} steps without finishing. Tell me what you hear."
     print(f"\n{reply}")

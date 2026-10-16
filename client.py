@@ -16,9 +16,10 @@ calls = 0
 def _send_once(msg):
     global calls
     calls += 1
-    # Fault injection for demos and tests: every call from this number on fails.
+    # Fault injection for demos and tests: this call and the next one fail. That beats the retry and stops the turn.
+    # Then Ableton answers again, like after a short freeze, so rollback can run.
     fail_at = os.environ.get("BRIDGE_FAIL_AT")
-    if fail_at and calls >= int(fail_at):
+    if fail_at and int(fail_at) <= calls < int(fail_at) + 2:
         raise BridgeDown("fault injection")
     try:
         # One request line and one reply line per connection. TCP carries a reply of any size.

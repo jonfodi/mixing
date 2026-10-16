@@ -65,6 +65,10 @@ class SoundBridge(ControlSurface):
         if msg["cmd"] == "insert":
             track.insert_device(msg["device"])
             return {"ok": True}
+        # Rollback removes effects the agent added.
+        if msg["cmd"] == "delete":
+            track.delete_device(msg["device"])
+            return {"ok": True}
         param = next(p for p in track.devices[msg["device"]].parameters if p.name == msg["param"])
         if msg["cmd"] == "set":
             param.value = msg["value"]

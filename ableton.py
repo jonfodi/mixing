@@ -12,10 +12,6 @@ def number(text):
     return n / 1000 if m[3] == "ms" else n
 
 
-def stems():
-    return [t["name"] for t in send({"cmd": "tracks"})]
-
-
 def available():
     """Every audio effect Ableton can insert, by name."""
     return send({"cmd": "effects"})
@@ -63,6 +59,32 @@ def state(stem):
         lines.append(d["name"])
         lines += [f"  {p['name']} = {p['display']}" for p in d["parameters"]]
     return "\n".join(lines) or "no effects"
+
+
+def snapshot():
+    """Every stem's effects with the raw value of each setting. Taken before the agent changes anything."""
+    return {t["name"]: t["devices"] for t in send({"cmd": "tracks"})}
+
+
+def values(devices):
+    return [(d["name"], [p["value"] for p in d["parameters"]]) for d in devices]
+
+
+def reconcile(stem, devices):
+    """Put a stem back to its snapshot. Ableton is the source of truth, so this compares two reads and never trusts a log.
+    Returns True when a fresh read matches the snapshot."""
+    now = effects(stem)
+    # The artist moved or removed an effect. Putting values back could land on the wrong effect, so stop.
+    if [d["name"] for d in now[:len(devices)]] != [d["name"] for d in devices]:
+        return False
+    # Ableton adds effects at the end, so anything past the snapshot was added this turn.
+    for i in reversed(range(len(devices), len(now))):
+        send({"cmd": "delete", "track": stem, "device": i})
+    for i, d in enumerate(devices):
+        for old, cur in zip(d["parameters"], now[i]["parameters"]):
+            if cur["value"] != old["value"]:
+                send({"cmd": "set", "track": stem, "device": i, "param": old["name"], "value": old["value"]})
+    return values(effects(stem)) == values(devices)
 
 
 def apply(stem, controls):
