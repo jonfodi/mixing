@@ -1,0 +1,76 @@
+# Golden examples for organize. Graded by code: each case says what must be theme material and what must be an ask.
+# Run: fnm exec --using=24 npx promptfoo@0.124.1 eval -c evals/organize.yaml
+description: organize splits theme material from asks
+
+prompts: ["{{message}}"]
+
+providers:
+  - id: file://providers.py:call_organize
+    label: organize
+    config:
+      pythonExecutable: .venv/bin/python
+
+tests:
+  - description: pure feeling has no asks
+    vars: {message: "make it feel lonely, like the last person awake in the city"}
+    assert:
+      - type: javascript
+        value: output.theme_material.length > 0 && output.asks.length === 0
+      # Copied in the artist's words. Not summarized.
+      - type: javascript
+        value: output.theme_material.includes("last person awake")
+
+  - description: pure ask has no theme material
+    vars: {message: "a bit more reverb on the vocals"}
+    assert:
+      - type: javascript
+        value: output.theme_material === "" && output.asks.length === 1
+
+  - description: one sentence gives both
+    vars: {message: "add tape delay on the guitar because it should feel nostalgic"}
+    assert:
+      - type: javascript
+        value: output.theme_material.includes("nostalgic") && output.asks.some(a => /tape delay/i.test(a))
+
+  - description: energy words are theme material
+    # A live run sorted this as an ask. It describes how the song should feel.
+    vars: {message: "super upbeat and energetic"}
+    assert:
+      - type: javascript
+        value: output.theme_material.length > 0
+
+  - description: small talk gives nothing
+    vars: {message: "hey! hope your week is going well"}
+    assert:
+      - type: javascript
+        value: output.theme_material === "" && output.asks.length === 0
+
+  - description: a song named for its mood is theme material
+    vars: {message: "I want that bittersweet feeling from Ivy by Frank Ocean"}
+    assert:
+      - type: javascript
+        value: output.theme_material.includes("bittersweet")
+
+  - description: two technical asks
+    vars: {message: "cut the bass below 40 Hz and compress the drums harder"}
+    assert:
+      - type: javascript
+        value: output.theme_material === "" && output.asks.length === 2
+
+  - description: a story with no asks
+    vars: {message: "this song is about my grandmother passing. it should feel warm, not sad"}
+    assert:
+      - type: javascript
+        value: output.theme_material.includes("grandmother") && output.asks.length === 0
+
+  - description: a short follow-up is an ask
+    vars: {message: "dial it back"}
+    assert:
+      - type: javascript
+        value: output.theme_material === "" && output.asks.length === 1
+
+  - description: an image plus a concrete ask
+    vars: {message: "the chorus should hit like breathing out after holding your breath. louder drums there"}
+    assert:
+      - type: javascript
+        value: output.theme_material.includes("holding your breath") && output.asks.some(a => /drum/i.test(a))
