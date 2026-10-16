@@ -88,11 +88,20 @@ def reconcile(stem, devices):
 
 
 def apply(stem, controls):
-    """Carry out each control on a stem. Returns one line per rejected control."""
-    rejected = []
+    """Carry out each control on a stem. Returns one line per applied control with the value Ableton now shows,
+    and one line per rejected control with the reason."""
+    done, rejected = [], []
     for c in controls:
         try:
             set_control(stem, c["effect"], c["setting"], c["value"])
+            done.append(c)
         except (LookupError, RuntimeError) as e:
             rejected.append(f"{c['effect']} / {c['setting']} = {c['value']}: {e}")
-    return rejected
+    # Verify after write: report what Ableton shows, not what we asked for. One read covers every control.
+    # Reversed so the first effect with a name wins, the same one set_control changed.
+    now = {d["name"]: d for d in reversed(effects(stem))} if done else {}
+    applied = [
+        f"{c['effect']} / {c['setting']} = {next(p['display'] for p in now[c['effect']]['parameters'] if p['name'] == c['setting'])}"
+        for c in done
+    ]
+    return applied, rejected

@@ -106,7 +106,7 @@ def read_track(stem: str) -> str:
 
 @beta_tool
 def apply_controls(stem: str, controls: list[Control]) -> str:
-    """Set controls on one stem. Returns any controls Ableton rejected, with the reason. Fix them if you can.
+    """Set controls on one stem. Returns each applied control with the value Ableton now shows, and each rejected control with the reason. Fix rejected ones if you can.
 
     Args:
         stem: the stem's name, exactly as listed.
@@ -114,10 +114,10 @@ def apply_controls(stem: str, controls: list[Control]) -> str:
     """
     touched.add(stem)
     try:
-        rejected = ableton.apply(stem, controls)
+        applied, rejected = ableton.apply(stem, controls)
     except BridgeDown as e:
         return stop(e)
-    return "\n".join(f"rejected: {r}" for r in rejected) or "all applied"
+    return "\n".join([f"applied: {a}" for a in applied] + [f"rejected: {r}" for r in rejected])
 
 
 # The SDK retries twice on its own. 60 s stops a hung request from freezing the program. The default is 10 minutes.
