@@ -182,6 +182,13 @@ def system_prompt():
     return f"{SYSTEM}\n\nEffects you can use: {', '.join(ableton.available())}"
 
 
+TOOLS = [organize, read_track, apply_controls, record_feedback, revert]
+
+
+def header(stems):
+    """Only what changes between turns. The stems stay here because the artist can add or rename tracks."""
+    return f"Turn {len(turns)}.\n\n{show_brief()}\n\nStems: {', '.join(stems)}"
+
 
 def turn(history, message):
     """One artist turn. The runner sends the messages to the model, runs any tools it asks for, and repeats until it replies.
@@ -198,8 +205,7 @@ def turn(history, message):
         before = ableton.snapshot()
         turns.append({"before": before, "touched": touched})
         system = system_prompt()
-        # Only what changes between turns. The stems stay here because the artist can add or rename tracks.
-        known = f"Turn {len(turns)}.\n\n{show_brief()}\n\nStems: {', '.join(before)}"
+        known = header(before)
     except BridgeDown:
         # Ableton is down before the model is called, so the turn costs nothing.
         print(f"\n{DOWN}")
@@ -212,7 +218,7 @@ def turn(history, message):
         cache_control={"type": "ephemeral"},
         # The model thinks before each step. summarized sends back a readable summary of that thinking.
         thinking={"type": "adaptive", "display": "summarized"},
-        tools=[organize, read_track, apply_controls, record_feedback, revert], messages=history, max_iterations=MAX_STEPS,
+        tools=TOOLS, messages=history, max_iterations=MAX_STEPS,
     )
     start = time.monotonic()
     try:

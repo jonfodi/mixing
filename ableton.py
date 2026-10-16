@@ -18,10 +18,12 @@ def available():
 
 
 def effects(stem):
-    for t in send({"cmd": "tracks"}):
+    tracks = send({"cmd": "tracks"})
+    for t in tracks:
         if t["name"] == stem:
             return t["devices"]
-    raise LookupError(f"no stem named {stem}")
+    # The names let the model fix a typo in one step.
+    raise LookupError(f"no stem named {stem}. Stems are: {', '.join(t['name'] for t in tracks)}")
 
 
 def set_control(stem, effect, setting, value):
