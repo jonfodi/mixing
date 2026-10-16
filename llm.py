@@ -1,5 +1,6 @@
 import functools
 import os
+import sys
 import time
 from typing import TypedDict
 
@@ -9,6 +10,7 @@ from anthropic.lib.tools import ToolError
 from dotenv import load_dotenv
 
 import ableton
+import store
 from client import BridgeDown
 from organize import split
 from theme import build as build_theme
@@ -266,7 +268,25 @@ def turn(history, message):
 
 
 if __name__ == "__main__":
-    history = []
+    db = store.connect()
+    if "--resume" in sys.argv:
+        session, history, brief, turns = store.load(db)
+        print(f"Resumed session {session} after turn {len(turns)}.\n\n{show_brief()}")
+    else:
+        history = []
+        # VARIANT tags the session for an A/B comparison in feedback.py.
+        session = store.start(db, MODEL, os.environ.get("VARIANT", "A"))
     print("What do you want the song to feel like? Press Enter on an empty line to stop.")
     while message := input("\n> "):
-        turn(history, message)
+        n = len(turns)
+        start = time.monotonic()
+        reply, steps = turn(history, message)
+        # No new snapshot means Ableton was down before the model was called. There is nothing to save.
+        if len(turns) == n:
+            continue
+        try:
+            # The track as the agent left it. The next turn's snapshot shows what the artist changed by hand.
+            after = ableton.snapshot()
+        except BridgeDown:
+            after = None
+        store.save_turn(db, session, len(turns), message, reply, steps, turns[-1], after, brief, history, time.monotonic() - start)
