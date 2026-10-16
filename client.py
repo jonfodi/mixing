@@ -4,11 +4,10 @@ import sys
 
 
 def send(msg):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(2)
-    sock.sendto(json.dumps(msg).encode(), ("127.0.0.1", 9001))
-    reply = json.loads(sock.recv(1 << 20))
-    sock.close()
+    # One request line and one reply line per connection. TCP carries a reply of any size.
+    with socket.create_connection(("127.0.0.1", 9001), timeout=2) as sock:
+        sock.sendall(json.dumps(msg).encode() + b"\n")
+        reply = json.loads(sock.makefile("rb").readline())
     if isinstance(reply, dict) and "error" in reply:
         raise RuntimeError(reply["error"])
     return reply

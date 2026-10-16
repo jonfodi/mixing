@@ -13,22 +13,28 @@ def create_instance(c_instance):
 class SoundBridge(ControlSurface):
     def __init__(self, c_instance):
         super().__init__(c_instance)
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # TCP, because macOS caps one UDP packet at 9216 bytes and a track list is bigger.
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", PORT))
+        self._sock.listen()
         self._sock.setblocking(False)
 
     # Live calls this about every 100 ms on its main thread, the only safe place to change the song.
+    # Each connection carries one request line and one reply line.
     def update_display(self):
         super().update_display()
         try:
-            data, addr = self._sock.recvfrom(65536)
+            conn, _ = self._sock.accept()
         except BlockingIOError:
             return
-        try:
-            reply = self._handle(json.loads(data))
-        except Exception as e:
-            reply = {"error": repr(e)}
-        self._sock.sendto(json.dumps(reply).encode(), addr)
+        with conn:
+            conn.settimeout(1)
+            try:
+                reply = self._handle(json.loads(conn.makefile("rb").readline()))
+            except Exception as e:
+                reply = {"error": repr(e)}
+            conn.sendall(json.dumps(reply).encode() + b"\n")
 
     def _handle(self, msg):
         tracks = self.song().tracks

@@ -76,6 +76,8 @@ def turn(history, message):
     history.append({"role": "user", "content": f"{known}\n\n{message}"})
     runner = client.beta.messages.tool_runner(
         model=MODEL, max_tokens=16000, system=SYSTEM,
+        # The model thinks before each step. summarized sends back a readable summary of that thinking.
+        thinking={"type": "adaptive", "display": "summarized"},
         tools=[read_track, apply_controls], messages=history, max_iterations=MAX_STEPS,
     )
     steps = []
@@ -91,11 +93,18 @@ def turn(history, message):
         calls = [b for b in response.content if b.type == "tool_use"]
         outputs = [r["content"] for r in results["content"]] if results else []
         step = {
+            "thinking": "".join(b.thinking for b in response.content if b.type == "thinking"),
             "tools": [{"name": c.name, "input": c.input, "result": o} for c, o in zip(calls, outputs)],
             "usage": response.usage.to_dict(),
             "ms": ms,
         }
         steps.append(step)
+        print(f"\nstep {len(steps)} · {ms} ms · in {step['usage']['input_tokens']} out {step['usage']['output_tokens']}")
+        if step["thinking"]:
+            print(f"  thinking: {step['thinking']}")
+        for t in step["tools"]:
+            print(f"  {t['name']}({t['input']})")
+            print("    -> " + str(t["result"]).replace("\n", "\n       "))
         start = time.monotonic()
     reply = "".join(b.text for b in response.content if b.type == "text")
     if response.stop_reason == "tool_use":
