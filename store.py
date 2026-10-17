@@ -68,9 +68,9 @@ def save_turn(db, session, n, message, reply, steps, turn, after, brief, history
 
 
 def load(db, session=None):
-    """The last session, or the one named. Returns its id, history, brief, and turns in the shapes llm.py uses."""
+    """The last session, or the one named. Returns its id, history, brief, turns, and model in the shapes llm.py uses."""
     row = db.execute("select * from sessions where id = coalesce(?, (select max(id) from sessions))", (session,)).fetchone()
     rows = db.execute("select * from turns where session = ? order by n", (row["id"],)).fetchall()
     turns = [{"before": json.loads(r["before"]), "touched": set(json.loads(r["touched"]))} for r in rows]
     brief = json.loads(rows[-1]["brief"]) if rows else {"theme": "", "decisions": []}
-    return row["id"], json.loads(row["history"] or "[]"), brief, turns
+    return row["id"], json.loads(row["history"] or "[]"), brief, turns, row["model"]

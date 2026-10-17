@@ -1,5 +1,6 @@
 import functools
 import os
+import random
 import sqlite3
 import sys
 import time
@@ -271,12 +272,17 @@ def turn(history, message):
 if __name__ == "__main__":
     db = store.connect()
     if "--resume" in sys.argv:
-        session, history, brief, turns = store.load(db)
-        print(f"Resumed session {session} after turn {len(turns)}.\n\n{show_brief()}")
+        # The session keeps its model. Thinking blocks only work with the model that wrote them.
+        session, history, brief, turns, MODEL = store.load(db)
+        print(f"Resumed session {session} on {MODEL} after turn {len(turns)}.\n\n{show_brief()}")
     else:
         history = []
-        # VARIANT tags the session for an A/B comparison in feedback.py.
+        # A/B on the model: each session gets one at random, so feedback.py can compare models on artist sentiment.
+        if models := os.environ.get("AB_MODELS"):
+            MODEL = random.choice(models.split(","))
+        # VARIANT tags the session for any other A/B comparison, like a prompt change.
         session = store.start(db, MODEL, os.environ.get("VARIANT", "A"))
+        print(f"Session {session} on {MODEL}.")
     print("What do you want the song to feel like? Press Enter on an empty line to stop.")
     while message := input("\n> "):
         n = len(turns)

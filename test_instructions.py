@@ -105,6 +105,6 @@ def test_does_what_was_asked(song, message):
     seconds = time.monotonic() - t
     after = song.mix()
     failed = [name for name, check in checks.items() if not check(before, after)]
-    print(f"\n{message}: {len(checks) - len(failed)}/{len(checks)} asks done · {seconds:.0f} s")
+    print(f"\n{llm.MODEL} · {message}: {len(checks) - len(failed)}/{len(checks)} asks done · {seconds:.0f} s")
     assert not failed, f"not done: {failed}. before {before} after {after}"
     assert seconds < MAX_SECONDS

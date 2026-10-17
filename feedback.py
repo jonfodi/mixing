@@ -15,6 +15,9 @@ load_dotenv()
 # Reading one reaction is a narrow job, so the cheap model does it.
 MODEL = "claude-haiku-5-5"
 
+# Dollars per million tokens: input and output. Cache reads cost 10% of input. Cache writes cost 125%.
+PRICES = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2, 10), "claude-opus-5-5": (4, 20)}
+
 SYSTEM = """You read one exchange between a mix engineer and a music artist.
 The engineer changed the song and said what it did. Then the artist wrote back.
 
@@ -36,6 +39,16 @@ client = anthropic.Anthropic(timeout=60.0)
 
 def tool_calls(steps, name):
     return [t for s in steps for t in s["tools"] if t["name"] == name]
+
+
+def cost(model, steps):
+    """The main agent's cost for one turn. organize and theme are not in steps, so they are not counted."""
+    i, o = PRICES[model]
+    return sum(
+        (u["input_tokens"] * i + (u.get("cache_read_input_tokens") or 0) * i * 0.1
+         + (u.get("cache_creation_input_tokens") or 0) * i * 1.25 + u["output_tokens"] * o) / 1e6
+        for u in (s["usage"] for s in steps)
+    )
 
 
 def hand_fixes(turn, next_turn):
@@ -72,6 +85,8 @@ def report(db):
         g["turns"].append(len(turns))
         for i, t in enumerate(turns):
             steps = json.loads(t["steps"])
+            g["cost"].append(cost(session["model"], steps))
+            g["seconds"].append(t["seconds"])
             feedback = tool_calls(steps, "record_feedback")
             g["liked"].append(sum(f["input"]["liked"] for f in feedback))
             g["rejected"].append(sum(not f["input"]["liked"] for f in feedback))
@@ -81,16 +96,17 @@ def report(db):
                 g["hand fixes"].append(hand_fixes(turns[i - 1], t))
                 g["sentiment"].append(sentiment(db, t, turns[i - 1]))
 
-    columns = ["sessions", "turns/session", "liked", "rejected", "reverts", "hand fixes", "sentiment"]
+    columns = ["sessions", "turns/session", "$/turn", "s/turn", "liked", "rejected", "reverts", "hand fixes", "sentiment"]
     print(f"{'version':<24}{'model':<18}{'variant':<9}" + "".join(f"{c:>15}" for c in columns))
     for (version, model, variant), g in groups.items():
         sentiments = g["sentiment"]
         row = [
             len(g["turns"]), sum(g["turns"]) / len(g["turns"]),
+            sum(g["cost"]) / len(g["cost"]), sum(g["seconds"]) / len(g["seconds"]),
             sum(g["liked"]), sum(g["rejected"]), sum(g["reverts"]), sum(g["hand fixes"]),
             sum(sentiments) / len(sentiments) if sentiments else float("nan"),
         ]
-        print(f"{version:<24}{model:<18}{variant:<9}" + "".join(f"{v:>15.2f}" if isinstance(v, float) else f"{v:>15}" for v in row))
+        print(f"{version:<24}{model:<18}{variant:<9}" + "".join(f"{v:>15.3g}" if isinstance(v, float) else f"{v:>15}" for v in row))
 
 
 if __name__ == "__main__":
